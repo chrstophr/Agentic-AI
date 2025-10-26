@@ -5,7 +5,9 @@ import smtplib;
 import os;
 include utils;
 
-glob llm = Model(model_name="gpt-4o", verbose=False);
+#glob llm = Model(model_name="gpt-4o", verbose=False);
+glob llm = Model(model_name="gemini/gemini-2.0-flash", verbose=False);
+#glob llm = Model(model_name="gemini/gemini-2.5-pro", api_key=os.getenv("GEMINI_API_KEY"), verbose=False);
 
 node Task {
     has task:str = "";

@@ -5,7 +5,8 @@ import os;
 include agent_core;
 import from utils { get_current_datetime }
 
-glob llm = Model(model_name="gpt-4o", verbose=False);
+#glob llm = Model(model_name="gpt-4o", verbose=False);
+glob llm = Model(model_name="gemini/gemini-2.0-flash", verbose=False);
 
 enum RoutingNodes {
     GENERAL_CHAT = "GeneralChat",

@@ -43,7 +43,7 @@ walker agent {
         static has auth: bool = False;
     }
     def get_node_class(class_name: str) {
-        main_mod = sys.modules.get("__main__");
+        main_mod = sys.modules.get("main");
         if main_mod and hasattr(main_mod, class_name) {
             return getattr(main_mod, class_name, None);
         }
@@ -70,6 +70,7 @@ walker agent {
         }
         routed_node = self.route_to_node(self.utterance, self.session.get_history());
         node_cls = self.get_node_class(routed_node.value);
+#        print(f"🧭 Routed node: {routed_node.value}");
         if not node_cls {
             print("Failed to get node class");
             return;

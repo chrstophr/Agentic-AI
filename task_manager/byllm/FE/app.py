@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
-from streamlit.components.v1 import html as components_html
+import streamlit.components.v1 as components
+import pandas as pd
 
 # --- PAGE CONFIG ---
 st.set_page_config(
@@ -141,7 +142,7 @@ with tab1:
 
         # Auto-scroll to newest message
         if st.session_state.chat_history:
-            components_html(
+            components.html(
                 """
                 <script>
                   setTimeout(() => {
@@ -207,7 +208,7 @@ with tab2:
                     reports = data.get("reports", [])
                     tasks = reports[0] if reports and isinstance(reports[0], list) else []
                     if tasks:
-                        import pandas as pd
+
                         # Flatten each task to extract id and context fields
                         flat_tasks = []
                         for t in tasks:
