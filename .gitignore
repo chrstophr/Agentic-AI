@@ -6,3 +6,6 @@ mydatabase
 .env
 *.json
 *.jsonl
+node_modules/
+dist/
+build/
