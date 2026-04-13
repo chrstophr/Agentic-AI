@@ -128,6 +128,8 @@ sv import from .database { connect_db }
 sv node SecretData { has value: str; }
 ```
 
+> **Note on `sv import` between two server modules.** When both the importer and the importee are server-context modules running as separate microservices, `sv import` generates HTTP client stubs instead of pulling the provider into the consumer's process. The same source also works as a monolith. See [Microservice Interop (sv-to-sv)](jac-scale.md#microservice-interop-sv-to-sv) in the jac-scale reference for details.
+
 ### REST API with jac start
 
 Public walkers automatically become REST endpoints:
@@ -161,11 +163,11 @@ node Task {
 
 # Server: return typed objects directly
 def:pub get_tasks -> list[Task] {
-    return [root-->][?:Task];
+    return [root()-->][?:Task];
 }
 
 def:pub create_task(title: str) -> Task {
-    task = root ++> Task(title=title);
+    task = root() ++> Task(title=title);
     return task[0];
 }
 
@@ -248,6 +250,16 @@ For one-off client-side declarations, use the single-statement `cl` prefix:
 ```jac
 cl import from react { useState }
 cl glob THEME: str = "dark";
+```
+
+This also works for component definitions, which is the preferred shorthand for single-component files:
+
+```jac
+# Equivalent to wrapping in cl { }
+cl def:pub app -> JsxElement {
+    has count: int = 0;
+    return <div>Count: {count}</div>;
+}
 ```
 
 ### Export Requirement
@@ -530,7 +542,7 @@ cl {
 
         # Fetch data on component mount
         async can with entry {
-            result = root spawn get_tasks();
+            result = root() spawn get_tasks();
             if result.reports and result.reports.length > 0 {
                 tasks = result.reports[0];
             }
@@ -561,8 +573,8 @@ The `spawn` call returns a result object:
 
 | Syntax | Description |
 |--------|-------------|
-| `root spawn WalkerName()` | Spawn walker from root node |
-| `root spawn WalkerName(arg=value)` | Spawn with parameters |
+| `root() spawn WalkerName()` | Spawn walker from root node |
+| `root() spawn WalkerName(arg=value)` | Spawn with parameters |
 | `node_id spawn WalkerName()` | Spawn from specific node |
 
 The spawn call returns a result object with:
@@ -581,7 +593,7 @@ cl {
 
         # Create
         async def handle_add(title: str) -> None {
-            result = root spawn add_task(title=title);
+            result = root() spawn add_task(title=title);
             if result.reports and result.reports.length > 0 {
                 tasks = tasks + [result.reports[0]];
             }
@@ -589,7 +601,7 @@ cl {
 
         # Update
         async def handle_toggle(task_id: str) -> None {
-            result = root spawn toggle_task(task_id=task_id);
+            result = root() spawn toggle_task(task_id=task_id);
             if result.reports and result.reports[0]["success"] {
                 tasks = [
                     {**t, "completed": not t["completed"]} if t["id"] == task_id else t
@@ -600,7 +612,7 @@ cl {
 
         # Delete
         async def handle_delete(task_id: str) -> None {
-            result = root spawn delete_task(task_id=task_id);
+            result = root() spawn delete_task(task_id=task_id);
             if result.reports and result.reports[0]["success"] {
                 tasks = [t for t in tasks if t["id"] != task_id];
             }
@@ -625,7 +637,7 @@ cl {
         async can with entry {
             loading = True;
             try {
-                result = root spawn get_data();
+                result = root() spawn get_data();
                 if result.reports and result.reports.length > 0 {
                     data = result.reports[0];
                 }
@@ -659,7 +671,7 @@ cl {
         has data: any = None;
 
         async def fetch_data() -> None {
-            result = root spawn get_live_data();
+            result = root() spawn get_live_data();
             if result.reports and result.reports.length > 0 {
                 data = result.reports[0];
             }
@@ -882,14 +894,14 @@ jac-client provides built-in authentication functions via `@jac/runtime`.
 cl import from "@jac/runtime" { jacLogin, useNavigate }
 
 cl {
-    def:pub LoginForm() -> any {
+    def:pub LoginForm() -> JsxElement {
         has username: str = "";
         has password: str = "";
         has error: str = "";
 
         navigate = useNavigate();
 
-        async def handleLogin(e: any) -> None {
+        async def handleLogin(e: FormEvent) -> None {
             e.preventDefault();
             # jacLogin returns bool (True = success, False = failure)
             success = await jacLogin(username, password);
@@ -930,7 +942,7 @@ cl {
 cl import from "@jac/runtime" { jacLogout, jacIsLoggedIn }
 
 cl {
-    def:pub NavBar() -> any {
+    def:pub NavBar() -> JsxElement {
         isLoggedIn = jacIsLoggedIn();
 
         def handleLogout() -> None {
@@ -956,7 +968,7 @@ Each authenticated user gets an isolated root node:
 ```jac
 walker:pub GetMyData {
     can get with Root entry {
-        # 'root' is user-specific
+        # 'here' is the user-specific root node
         my_data = [-->][?:MyData];
         report my_data;
     }
@@ -990,7 +1002,7 @@ cl import from "@jac/runtime" { AuthGuard, Outlet }
 
 # pages/(auth)/layout.jac
 cl {
-    def:pub layout() -> any {
+    def:pub layout() -> JsxElement {
         return <AuthGuard redirect="/login">
             <Outlet />
         </AuthGuard>;
@@ -1068,14 +1080,20 @@ cl {
 }
 ```
 
-> **Note:** The `cn()` utility is a local file you create in your project (shadcn/ui pattern):
+> **Note:** The `cn()` utility is a local file you create in your project. You can write it entirely in Jac (no TypeScript needed):
 >
-> ```typescript
-> // lib/utils.ts
-> import { type ClassValue, clsx } from "clsx"
-> import { twMerge } from "tailwind-merge"
-> export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
+> ```jac
+> # lib/utils.cl.jac
+> import from "clsx" { clsx }
+> import from "tailwind-merge" { twMerge }
+>
+> def:pub cn(inputs: Any) -> str {
+>     args = [].slice.call(arguments);
+>     return twMerge(clsx(args));
+> }
 > ```
+>
+> Requires `clsx` and `tailwind-merge` in `[dependencies.npm]`.
 
 ### JSX Syntax Reference
 
@@ -1349,6 +1367,33 @@ This generates `.jac/client/configs/postcss.config.js` and `.jac/client/configs/
 | Vite plugins (Tailwind v4, custom plugins) | `[plugins.client.vite]` |
 | PostCSS / Tailwind v3 / ESLint / Prettier | `[plugins.client.configs]` |
 
+### shadcn/ui Configuration
+
+The `[jac-shadcn]` section configures the shadcn/ui component system. This controls the visual style, color theme, font, and border radius used by shadcn components in your project.
+
+```toml
+[jac-shadcn]
+style = "nova"            # Component style variant
+baseColor = "neutral"     # Base color palette
+theme = "amber"           # Accent color theme
+font = "inter"            # Font family
+radius = "default"        # Border radius preset
+menuAccent = "subtle"     # Menu accent style
+menuColor = "default"     # Menu color scheme
+registry = "https://jac-shadcn.jaseci.org"  # Component registry URL
+```
+
+| Key | Description | Examples |
+|-----|-------------|---------|
+| `style` | Component style variant | `"nova"`, `"default"` |
+| `baseColor` | Base neutral color palette | `"neutral"`, `"slate"`, `"zinc"`, `"gray"` |
+| `theme` | Accent/primary color | `"amber"`, `"blue"`, `"green"`, `"red"` |
+| `font` | Typography font family | `"inter"`, `"geist"`, `"system"` |
+| `radius` | Border radius preset | `"default"`, `"sm"`, `"md"`, `"lg"`, `"none"` |
+| `registry` | shadcn component registry URL | Custom registry for Jac-compatible components |
+
+shadcn components use semantic color tokens (`bg-primary`, `text-foreground`, `border-border`) that automatically adapt to the configured theme. See the [NPM Packages & UI Libraries tutorial](../../tutorials/fullstack/npm-and-libraries.md) for component authoring patterns.
+
 ### TypeScript Configuration
 
 Override the generated `tsconfig.json` via `[plugins.client.ts]`:
@@ -1454,6 +1499,8 @@ jac build [filename] [--client TARGET] [-p PLATFORM]
 | `--client` | Build target (`web`, `desktop`, `pwa`) | `web` |
 | `-p, --platform` | Desktop platform (`windows`, `macos`, `linux`, `all`) | Current platform |
 
+For desktop builds, the **client-only** variant (web bundle inside a Tauri shell, no bundled sidecar) is enabled by setting `client_only = true` under `[desktop]` in `jac.toml` rather than via a CLI flag -- see [Desktop Target → Client-Only Mode](#client-only-mode). In all desktop builds the build environment sets `JAC_BUILD=1` so import-time server starts stay inert.
+
 **Examples:**
 
 ```bash
@@ -1536,12 +1583,16 @@ jac start --dev              # Dev server with HMR
 
 ### Desktop Target (Tauri)
 
-Native desktop applications using Tauri. Creates installers for Windows, macOS, and Linux.
+Native desktop applications using Tauri. The full-stack Jac app -- frontend bundle, Jac runtime, and your backend walkers/functions -- ships as a single installer for Windows, macOS, and Linux. End users do not need Python or Node installed.
+
+**Architecture:**
+
+A desktop build produces a Tauri shell that hosts a webview pointed at a bundled **sidecar** -- a PyInstaller-frozen executable containing Python, jaclang, jac-client, your `.jac` sources, and any configured plugins. On launch, Tauri spawns the sidecar on a free local port, reads `JAC_SIDECAR_PORT=<port>` from its stdout, and injects the resulting URL into the webview before any page JavaScript runs. The webview is the same client bundle the web target produces; the sidecar is the same backend `jac start` would run, just frozen.
 
 **Prerequisites:**
 
 - Rust/Cargo: [rustup.rs](https://rustup.rs)
-- Build tools (platform-specific)
+- Platform build tools (Visual Studio Build Tools on Windows, Xcode Command Line Tools on macOS, `webkit2gtk` + `libssl` + `librsvg` on Linux)
 
 **Setup & Build:**
 
@@ -1563,11 +1614,117 @@ jac build --client desktop --platform linux
 
 **Output:** Installers in `src-tauri/target/release/bundle/`:
 
-- Windows: `.exe` installer
+- Windows: `.exe` installer (NSIS) or `.msi`
 - macOS: `.dmg` or `.app` bundle
 - Linux: `.AppImage`, `.deb`, or `.rpm`
 
-**Configuration:** Edit `src-tauri/tauri.conf.json` to customize window size, title, and app metadata.
+**Configuration:** Window size, title, identifier, and other Tauri metadata are configured under `[desktop]` in `jac.toml` (the build regenerates `src-tauri/tauri.conf.json` from it on every build):
+
+```toml
+[desktop]
+name = "MyApp"
+identifier = "com.example.myapp"
+version = "1.0.0"
+
+[desktop.window]
+title = "MyApp"
+width = 1200
+height = 800
+min_width = 800
+min_height = 600
+
+[desktop.platforms]
+windows = true
+macos = true
+linux = true
+```
+
+**Python Dependencies:**
+
+Desktop builds automatically install and bundle Python dependencies from `jac.toml`:
+
+```toml
+[dependencies]
+websockets = ">=12.0"
+httpx = ">=0.27.0"
+```
+
+These are auto-installed into the bundling environment before PyInstaller runs -- no manual `pip install` needed. During the build, `JAC_BUILD=1` is set in the environment so any Jac code that auto-starts a server at import time stays inert (preventing port conflicts and unnecessary work).
+
+**Plugin Bundling:**
+
+Desktop builds bundle Jac plugins into the sidecar executable using PyInstaller's `collect_all()` plus `importlib.metadata.requires()` for transitive dependency discovery. Configure which plugins to include via `[desktop.plugins]` in `jac.toml`:
+
+```toml
+[desktop.plugins]
+jac_scale = true   # jac-scale: FastAPI server, auth, persistence (default: true)
+byllm = true       # byllm/litellm for LLM support (default: true)
+jac_coder = true   # jac-coder: AI coding features (default: true)
+jac_mcp = true     # jac-mcp: MCP server integration (default: true)
+```
+
+**Notes:**
+
+- Plugins must be installed (`pip install jac-scale byllm jac-coder jac-mcp`) before building -- the build collects them from your current Python environment.
+- `jac_client` itself is **always** bundled as a core package regardless of this config, because the sidecar entry point imports it directly. Setting `jac_client = false` is ignored.
+- The build excludes build-artifact directories (`src-tauri/`, `node_modules/`, `dist/`, `.jac/client/`) when collecting `.jac` files, so rebuilds do not recursively nest previous sidecar bundles.
+
+**Bundled Jac Sources:**
+
+All `.jac` files, `jac.toml`, and the `assets/` directory are copied into `src-tauri/jac/` and shipped as Tauri bundle resources. At runtime, the sidecar looks up `main.jac` in this bundled location first, falling back to parent directories. This is what makes desktop installs fully self-contained.
+
+#### Data Persistence on Installed Builds
+
+Installed desktop apps live in **read-only** locations -- `/usr/lib/`, `/opt/`, `C:\Program Files\`, or an AppImage's `/tmp/.mount_AppXXX/` squashfs. The Jac runtime and jac-scale write to disk relative to the working directory by default (the SQLite database `database.db`, the `.jac/data/` directory, session files), and those writes will fail or crash on a read-only mount.
+
+The sidecar resolves this at startup, **before** importing any Jac module, by setting the `JAC_DATA_PATH` environment variable to a writable location and `chdir`-ing into it. The Jac runtime's `get_db_path()` and jac-scale's config loader both honor this variable.
+
+**Default fallback chain** (the sidecar picks the first one that exists or can be created and passes a touch/unlink probe):
+
+| Platform | Default | First fallback | Second fallback |
+|----------|---------|----------------|-----------------|
+| Linux / macOS | `~/.local/share/jac-app` | `~/.jac-app` | `/tmp/jac-app-{uid}` |
+| Windows | `%LOCALAPPDATA%\jac-app` | `~/AppData/Local/jac-app` | `%TEMP%\jac-app` |
+
+**Override the default** by passing `--data-path` to the sidecar (useful when running the bundled sidecar binary by hand for debugging, or when wiring it into a launcher you control):
+
+```bash
+./src-tauri/binaries/jac-sidecar --data-path /var/lib/myapp
+```
+
+You can also export `JAC_DATA_PATH` before launching the app to point at a custom location for that run. The path you choose must be writable by the user running the app -- the sidecar will probe it and fail loudly if it cannot.
+
+**AppImage-specific environment cleanup:** AppImage runtimes inject `PYTHONHOME`, `PYTHONPATH`, and `PYTHONDONTWRITEBYTECODE` into the environment, which break the bundled Python interpreter inside the sidecar. The generated Tauri `main.rs` strips these variables before spawning the sidecar process.
+
+#### Client-Only Mode
+
+For setups where the desktop app is just a thin native shell around a remote backend (e.g., a hosted jac-scale deployment), set `client_only = true` under `[desktop]` in `jac.toml`:
+
+```toml
+[desktop]
+client_only = true
+
+[plugins.client.api]
+base_url = "https://api.example.com"
+```
+
+In this mode the build:
+
+- **Skips sidecar bundling entirely** -- no PyInstaller step, no Python bundle, smaller installer.
+- **Requires** `[plugins.client.api] base_url` to be set; the build raises a `RuntimeError` if it is missing, since the webview has no local backend to talk to.
+- **Still produces a full Tauri installer** -- only the backend half is omitted.
+
+It is also useful in CI, where you may want to verify the web bundle compiles inside a desktop build without paying for the PyInstaller round-trip.
+
+#### Runtime API URL Injection (Debugging)
+
+Desktop builds do **not** embed the API base URL at compile time. Tauri allocates the sidecar port dynamically, then injects `window.__JAC_API_BASE_URL__` into the webview via an `initialization_script` before any page JavaScript executes. A `get_api_url` Tauri command is also exposed as a fallback for code that needs to query the URL after page load.
+
+If you are debugging an "API not reachable" issue inside an installed desktop app:
+
+1. Run the sidecar binary directly from `src-tauri/binaries/` -- it logs to stderr and prints `JAC_SIDECAR_PORT=<port>` to stdout on startup.
+2. Use the **Debug** page in the `all-in-one` example app (under `examples/all-in-one/pages/debug.jac`), which shows the resolved API base URL, Tauri runtime detection, `get_api_url` invoke results, and interactive walker/HTTP probes.
+3. Check the data path the sidecar settled on -- it logs `[sidecar] Cannot use data path …` lines for any candidate it had to skip.
 
 ### PWA Target
 
@@ -1772,6 +1929,8 @@ In dev mode, API routes are automatically proxied:
 
 ## Event Handlers
 
+Jac provides ambient DOM types (`ChangeEvent`, `KeyboardEvent`, `MouseEvent`, `FormEvent`, etc.) that are available without import. Use these for type-safe event handling:
+
 ```jac
 cl {
     def:pub Form() -> JsxElement {
@@ -1780,8 +1939,8 @@ cl {
         return <div>
             <input
                 value={value}
-                onChange={lambda e: any -> None { value = e.target.value; }}
-                onKeyPress={lambda e: any -> None {
+                onChange={lambda e: ChangeEvent { value = e.target.value; }}
+                onKeyPress={lambda e: KeyboardEvent {
                     if e.key == "Enter" { submit(); }
                 }}
             />
@@ -1792,6 +1951,89 @@ cl {
     }
 }
 ```
+
+### Ambient DOM Types
+
+The following event and element types are available in all Jac modules without any import statement. Use them for type-safe event handlers in JSX:
+
+**Event Types:**
+
+| Type | Fires On | Key Properties |
+|------|----------|----------------|
+| `Event` | Base event | `target`, `type`, `preventDefault()` |
+| `ChangeEvent` | `onChange` | `target.value`, `target.checked` |
+| `InputEvent` | `onInput` | `data`, `inputType` |
+| `KeyboardEvent` | `onKeyDown`, `onKeyUp`, `onKeyPress` | `key`, `code`, `ctrlKey`, `shiftKey` |
+| `MouseEvent` | `onClick`, `onMouseDown`, etc. | `clientX`, `clientY`, `button` |
+| `PointerEvent` | `onPointerDown`, `onPointerUp` | `pointerId`, `pointerType`, `pressure` |
+| `FocusEvent` | `onFocus`, `onBlur` | `relatedTarget` |
+| `DragEvent` | `onDrag`, `onDrop` | `dataTransfer` |
+| `TouchEvent` | `onTouchStart`, `onTouchEnd` | `touches`, `changedTouches` |
+| `ClipboardEvent` | `onCopy`, `onCut`, `onPaste` | `clipboardData` |
+| `FormEvent` | `onSubmit`, `onReset` | `target` (HTMLFormElement) |
+| `WheelEvent` | `onWheel` | `deltaX`, `deltaY` |
+| `AnimationEvent` | `onAnimationStart`, `onAnimationEnd` | `animationName`, `elapsedTime` |
+| `TransitionEvent` | `onTransitionEnd` | `propertyName`, `elapsedTime` |
+| `ScrollEvent` | `onScroll` | Inherits from UIEvent |
+
+**Element Types:**
+
+| Type | For Element |
+|------|-------------|
+| `HTMLElement` | Base (any element) |
+| `HTMLInputElement` | `<input>` -- adds `value`, `checked`, `files`, `type` |
+| `HTMLTextAreaElement` | `<textarea>` -- adds `value`, `rows`, `cols` |
+| `HTMLSelectElement` | `<select>` -- adds `value`, `selectedIndex`, `options` |
+| `HTMLFormElement` | `<form>` -- adds `submit()`, `reset()`, `elements` |
+| `HTMLButtonElement` | `<button>` -- adds `disabled`, `type` |
+| `HTMLAnchorElement` | `<a>` -- adds `href`, `target`, `pathname` |
+| `HTMLImageElement` | `<img>` -- adds `src`, `alt`, `naturalWidth` |
+| `HTMLCanvasElement` | `<canvas>` -- adds `getContext()`, `toDataURL()` |
+| `HTMLVideoElement` | `<video>` -- adds `play()`, `pause()`, `currentTime` |
+| `HTMLAudioElement` | `<audio>` -- adds `play()`, `pause()`, `volume` |
+
+**Usage examples:**
+
+```jac
+cl {
+    def:pub TypedForm() -> JsxElement {
+        has text: str = "";
+        has checked: bool = False;
+
+        return <div>
+            <input
+                value={text}
+                onChange={lambda e: ChangeEvent { text = e.target.value; }}
+                onKeyDown={lambda e: KeyboardEvent {
+                    if e.key == "Enter" and not e.shiftKey { submit(); }
+                }}
+            />
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={lambda e: ChangeEvent { checked = e.target.checked; }}
+            />
+            <form onSubmit={lambda e: FormEvent {
+                e.preventDefault();
+                handleSubmit();
+            }}>
+                <button type="submit">Submit</button>
+            </form>
+        </div>;
+    }
+}
+```
+
+!!! tip "Migrating from `any`"
+    If you have existing event handlers using `e: any`, you can update them to use ambient types for better type safety and IDE support:
+
+    ```jac
+    # Before
+    onChange={lambda e: any -> None { value = e.target.value; }}
+
+    # After (no import needed)
+    onChange={lambda e: ChangeEvent { value = e.target.value; }}
+    ```
 
 ---
 
@@ -1835,7 +2077,7 @@ Import and wrap `JacClientErrorBoundary` around any subtree where you want to ca
 cl import from "@jac/runtime" { JacClientErrorBoundary }
 
 cl {
-    def:pub app() -> any {
+    def:pub app() -> JsxElement {
         return <JacClientErrorBoundary fallback={<div>Oops! Something went wrong.</div>}>
             <MainAppComponents />
         </JacClientErrorBoundary>;
@@ -1863,7 +2105,7 @@ By default, jac-client internally wraps your entire application with `JacClientE
 
 ```jac
 cl {
-    def:pub App() -> any {
+    def:pub App() -> JsxElement {
         return <JacClientErrorBoundary fallback={<div className="error">Component failed to load</div>}>
             <ExpensiveWidget />
         </JacClientErrorBoundary>;
@@ -1877,7 +2119,7 @@ You can nest multiple error boundaries for fine-grained error isolation:
 
 ```jac
 cl {
-    def:pub App() -> any {
+    def:pub App() -> JsxElement {
         return <JacClientErrorBoundary fallback={<div>App error</div>}>
             <Header />
             <JacClientErrorBoundary fallback={<div>Content error</div>}>
@@ -1942,6 +2184,63 @@ Anchors provide persistent object references across sessions, allowing nodes and
 
 ---
 
+## JavaScript Interop
+
+### Constructing Browser Objects
+
+Jac does not have a `new` keyword. Use `Reflect.construct()` to instantiate browser built-in constructors:
+
+<!-- jac-skip -->
+```jac
+cl {
+    # WebSocket
+    ws = Reflect.construct(WebSocket, [url]);
+
+    # URL
+    url = Reflect.construct(URL, [String(baseUrl)]);
+
+    # Date
+    now = Reflect.construct(Date, []);
+
+    # Promise
+    p = Reflect.construct(Promise, [lambda(resolve: Any, reject: Any) {
+        resolve.call(None, "done");
+    }]);
+
+    # CustomEvent
+    evt = Reflect.construct(CustomEvent, ["my-event", {"detail": data}]);
+}
+```
+
+### Callback Invocations
+
+When passing callbacks to be invoked later, use `.call(None, ...)`:
+
+<!-- jac-skip -->
+```jac
+cl {
+    handler = myCallback;
+    ws.onmessage = lambda(e: Any) {
+        handler.call(None, JSON.parse(e.data));
+    };
+}
+```
+
+### Module-Level State
+
+Use `glob` for state shared across a module:
+
+```jac
+cl {
+    glob initialized: bool = False;
+    glob cache: Any = None;
+}
+```
+
+For more patterns, see the [Advanced Patterns & JS Interop tutorial](../../tutorials/fullstack/advanced-patterns.md).
+
+---
+
 ## Development Tools
 
 ### Hot Module Replacement (HMR)
@@ -1973,6 +2272,8 @@ Provides:
 - [Fullstack Setup Tutorial](../../tutorials/fullstack/setup.md)
 - [Components Tutorial](../../tutorials/fullstack/components.md)
 - [State Management Tutorial](../../tutorials/fullstack/state.md)
+- [NPM Packages & UI Libraries](../../tutorials/fullstack/npm-and-libraries.md)
+- [Advanced Patterns & JS Interop](../../tutorials/fullstack/advanced-patterns.md)
 - [Backend Integration Tutorial](../../tutorials/fullstack/backend.md)
 - [Authentication Tutorial](../../tutorials/fullstack/auth.md)
 - [Routing Tutorial](../../tutorials/fullstack/routing.md)
