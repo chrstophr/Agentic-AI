@@ -31,13 +31,14 @@ The CLI is extensible through plugins. When you install plugins like `jac-scale`
 | `jac remove` | Remove packages from project |
 | `jac update` | Update dependencies to latest compatible versions |
 | `jac jacpack` | Manage project templates (.jacpack files) |
+| `jac eject` | Compile a project to standalone Python + JavaScript (zero `.jac` files) |
 | `jac grammar` | Extract and print the Jac grammar |
 | `jac script` | Run project scripts |
 | `jac py2jac` | Convert Python to Jac |
 | `jac jac2py` | Convert Jac to Python |
 | `jac tool` | Language tools (IR, AST) |
 | `jac lsp` | Language server |
-| `jac js` | JavaScript output |
+| `jac jac2js` | Convert Jac to JavaScript |
 | `jac build` | Build for target platform (jac-client) |
 | `jac setup` | Setup build target (jac-client) |
 
@@ -76,7 +77,7 @@ Execute a Jac file.
 **Note:** `jac <file>` is shorthand for `jac run <file>` - both work identically.
 
 ```bash
-jac run [-h] [-m] [--no-main] [-c] [--no-cache] [-e] [--profile PROFILE] filename [args ...]
+jac run [-h] [-m] [--no-main] [-c] [--no-cache] [-e DIAGNOSTICS] [--profile PROFILE] filename [args ...]
 ```
 
 | Option | Description | Default |
@@ -84,16 +85,26 @@ jac run [-h] [-m] [--no-main] [-c] [--no-cache] [-e] [--profile PROFILE] filenam
 | `filename` | Jac file to run | Required |
 | `-m, --main` | Treat module as `__main__` | `True` |
 | `-c, --cache` | Enable compilation cache | `True` |
-| `-e, --show-errors` | Show type check errors and warnings after execution | `False` |
+| `-e, --diagnostics` | Diagnostic verbosity: `error`, `all`, or `none` | `error` |
 | `--profile` | Configuration profile to load (e.g. prod, staging) | `""` |
 | `args` | Arguments passed to the script (available via `sys.argv[1:]`) | |
 
 Like Python, everything after the filename is passed to the script. Jac flags must come **before** the filename.
 
+**Diagnostics modes:**
+
+| Mode | Errors | Warnings | Exit code on errors |
+|------|--------|----------|---------------------|
+| `error` (default) | Shown with full details | Silent | `1` |
+| `all` | Shown with full details | Shown | `1` |
+| `none` | Silent | Silent | `0` |
+
+The diagnostics level can also be set in `jac.toml` under `[run].diagnostics`. The CLI flag takes precedence over the config file.
+
 **Examples:**
 
 ```bash
-# Run a file
+# Run a file (fails on compile errors by default)
 jac run main.jac
 
 # Run without cache (flags before filename)
@@ -102,14 +113,15 @@ jac run --no-cache main.jac
 # Pass arguments to the script
 jac run script.jac arg1 arg2
 
-# Run and show type check diagnostics
-jac run -e main.jac
+# Show all diagnostics (errors + warnings)
+jac run -e all main.jac
+
+# Suppress all diagnostics
+jac run -e none main.jac
 
 # Pass flag-like arguments to the script
 jac run script.jac --verbose --output result.txt
 ```
-
-> **Note**: `jac run` always prints a summary line with error and warning counts (if any). Use `-e` to see the full diagnostic details without running a separate `jac check`.
 
 **Passing arguments to scripts:**
 
@@ -1058,12 +1070,100 @@ jac create myproject --use mytemplate
 
 ---
 
-### jac js
+### jac eject
+
+Compile a Jac project to a self-contained output folder containing only Python and JavaScript files. The ejected project has **zero `.jac` files** and can be run, edited, and deployed without invoking the Jac compiler. Use it when you want to hand off a Jac-built application to a team that doesn't use Jac, freeze a snapshot of a project, or deploy on infrastructure where installing the toolchain is impractical.
+
+```bash
+jac eject [-h] [-o OUTPUT] [-f] [source]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `source` | Project directory to eject (must contain `jac.toml`) | `.` |
+| `-o, --output` | Output directory | `<source>-ejected` next to source |
+| `-f, --force` | Overwrite the output directory if it already exists | `False` |
+
+**What gets emitted**
+
+- Server-side `.sv.jac` modules become plain Python via the compiler's existing `gen.py` output (walkers compile to classes with `@on_entry`/`@on_exit`, spatial operations like `-->` and `visit` lower to `connect`/`refs`/`visit` calls).
+- Client-side `.cl.jac` modules become plain JavaScript via `gen.js` (JSX lowers to `__jacJsx(...)` calls, `has` declarations to `useState` hooks, `sv import` to auto-generated HTTP RPC stubs).
+- `.impl.jac` files merge automatically into their declaration sibling at compile time, so the eject pipeline never processes them directly.
+- Filenames drop the `.sv` / `.cl` context tag (`endpoints.sv.jac` → `endpoints.py`, `frontend.cl.jac` → `frontend.js`), matching what the compiler already emits in cross-module imports.
+- Static assets under `assets/` are copied verbatim into `frontend/src/assets/`.
+
+**Output layout**
+
+```
+<name>-ejected/
+├── README.md             how to run, layout, caveats
+├── run.sh                starts backend + frontend dev server
+├── backend/
+│   ├── serve.py          entry script (python serve.py)
+│   ├── requirements.txt  pip dependencies (includes jaclang)
+│   ├── main.py           ejected entry module
+│   └── ...               other ejected server modules
+└── frontend/
+    ├── package.json      npm dependencies (includes Vite)
+    ├── vite.config.js    dev server with backend proxy
+    ├── index.html        SPA shell loading src/main.js
+    └── src/
+        ├── main.js
+        ├── components/   ejected client components
+        └── assets/       static files
+```
+
+The generated `backend/serve.py` boots the existing `JacAPIServer` HTTP request handler against the ejected modules: it loads the entry module via `importlib`, injects it into `Jac.loaded_modules` so the introspector skips its own `jac_import`, and constructs `http.server.HTTPServer` directly to bypass the `Jac.create_server` plugin hook. It also forces the base SQLite-backed `UserManager` so register/login/auth work consistently regardless of which jaclang plugins are installed in the runtime environment.
+
+**Examples**
+
+```bash
+# Eject the current project to ./<name>-ejected/
+jac eject
+
+# Eject a specific project to a chosen output directory
+jac eject ./myapp -o /tmp/myapp-standalone
+
+# Overwrite an existing output directory
+jac eject ./myapp -o /tmp/myapp-standalone --force
+```
+
+**Running the ejected project**
+
+```bash
+cd <name>-ejected
+pip install -r backend/requirements.txt
+(cd frontend && npm install)
+./run.sh
+```
+
+The backend listens on `PORT` (default 8000) and the Vite dev server listens on `FRONTEND_PORT` (default 5173); the Vite config proxies `/walker`, `/walkers`, `/function`, `/functions`, `/user`, and `/cl` to the backend so the SPA can call API endpoints without CORS plumbing.
+
+**Caveats**
+
+- This first version still requires `jaclang` to be installed at runtime. The ejected backend imports walker primitives from `jaclang.jac0core.jaclib` and the HTTP request handler from `jaclang.runtimelib.server`. The goal is *zero `.jac` files in the output*, not *zero `jaclang` dependency*.
+- `.impl.jac` and `.test.jac` files are skipped (they have no standalone meaning); so are well-known build directories (`.jac`, `.git`, `.venv`, `node_modules`, `__pycache__`, `dist`, `build`, etc.).
+- Persistent state (users, root nodes, graph data) lives under `backend/.jac/data/` after first run, just as it would for `jac start`.
+
+**Extending eject from a plugin**
+
+Like every other command, `jac eject` is extensible through the standard plugin hook mechanism -- a plugin can add flags via `registry.extend_command("eject", ...)` and either replace the default behavior in a pre-hook (`jac-scale --scale` style) or augment the output in a post-hook (`jac-client --client desktop` style). See the [Plugin Authoring Guide](../plugin-authoring.md) for the full extension model.
+
+For eject specifically, `jaclang.cli.commands.impl.eject` exports two helpers so plugin pre/post hooks can stay in sync with whatever the default command produces:
+
+| Helper | Purpose |
+|--------|---------|
+| `resolve_eject_output(src: Path, output: str) -> Path` | Returns the resolved output directory, applying the same `<source>-ejected` fallback the command uses when `--output` is not given. |
+| `load_eject_project_metadata(src: Path) -> dict` | Parses `jac.toml` and returns a dict with `project_name`, `entry_point`, `entry_module`, and the raw `toml_data` so plugins can read sections like `[plugins.scale]` or `[dependencies.npm]` without re-parsing. |
+
+---
+
+### jac jac2js
 
 Generate JavaScript output from Jac code (used for jac-client frontend compilation).
 
 ```bash
-jac js [-h] filename
+jac jac2js [-h] filename
 ```
 
 | Option | Description | Default |
@@ -1074,8 +1174,12 @@ jac js [-h] filename
 
 ```bash
 # Generate JS from Jac file
-jac js app.jac
+jac jac2js app.jac
 ```
+
+> **Deprecated:** `jac js` is a deprecated alias for `jac jac2js` and will be
+> removed in a future release. It still works but emits a deprecation warning
+> on stderr; update scripts to use `jac jac2js`.
 
 ---
 
